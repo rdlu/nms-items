@@ -210,6 +210,17 @@
    "where": "Lands at the space station; system and ship name not shown in the clip",
    "source": "The Game Hub, youtube.com/shorts/mzRZu53WGoI (2026-07-27)",
    "added": "2026-10-07"
+  },
+  {
+   "name": "Bot Test Prime",
+   "code": "0123456789AB",
+   "kind": "starship",
+   "origin": "shared",
+   "galaxy": 1,
+   "detail": "Test entry for the contributions bot - not a real place",
+   "where": "",
+   "source": "testing the bot - @rdlu via #1",
+   "added": "2026-10-17"
   }
  ],
  "_trash": []
