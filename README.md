@@ -923,3 +923,4 @@ with hgpaktool (MIT) and MBINCompiler (LGPL-3.0), neither of which is
 redistributed here; until Cosmos they came from
 [NMS-Handbook](https://github.com/ApexFatality93/NMS-Handbook) (GPL-3.0), still
 the fallback source. No Man's Sky and its data belong to Hello Games. Portal glyphs are traced from [nmsportals](https://nmsportals.github.io/).
+
