@@ -62,7 +62,7 @@ PYTHONPATH = "{{config_root}}/src"
 #   ci:local   check + lint:shell, what pull-request CI runs
 #   lint:shell bash -n and shellcheck over the shell scripts
 #   hooks:*    the git hooks in .githooks/: install, uninstall, run, status
-#   deploy     check, push main over SSH, follow the Pages run
+#   deploy     merge a green PR (gh), then follow the Pages run
 #
 # Most of the old flat names (web-build, pdf, extract, validate-locations, ...)
 # still work as aliases of the new ones.

@@ -10,6 +10,9 @@ TUI and the web page already use (nms_items.portals):
     apply     the same issue, once a maintainer labels it `accepted`: check
               again, then append it to data/locations.json as `shared`,
               crediting the reporter and the issue.
+    vouch     after `apply`, on the pull request it opened: validate again,
+              then post a `check` commit status on its head, since a PR
+              opened with GITHUB_TOKEN starts no CI of its own.
     validate  data/locations.json as a whole, strictly -- what a pull request
               that edits it has to pass. The TUI's loader skips a broken row
               so a typo cannot take a screen down; a PR gets told instead.
@@ -328,6 +331,41 @@ def setup(dry_run: bool = False) -> None:
     print("actions   fork pull requests from every outside contributor wait for approval")
 
 
+CHECK = "check"  # the required status check on main: ci.yml's job name
+
+
+def vouch_call(sha: str, repo: str, run_url: str) -> list[str]:
+    """The `gh` call that reports `check` passed on the bot's pull request."""
+    return ["api", "-X", "POST", f"repos/{repo}/statuses/{sha}",
+            "-f", "state=success", "-f", f"context={CHECK}",
+            "-f", "description=portal address validated by the contributions bot",
+            "-f", f"target_url={run_url}"]
+
+
+def vouch(sha: str, path: Path = LOCATIONS, dry_run: bool = False) -> int:
+    """Validate the file again, then mark `sha` as passing `check`.
+
+    A pull request the bot opens with GITHUB_TOKEN starts no workflow, so
+    ci.yml never reports `check` on it and the required check would wait
+    forever. The bot has just run the same validation ci.yml would run on a
+    change to data/locations.json alone, so it reports the result itself.
+    """
+    problems = validate(path)
+    if problems:
+        print("not vouching: " + "; ".join(problems), file=sys.stderr)
+        return 1
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        print(f"not vouching: {sha!r} is not a commit SHA", file=sys.stderr)
+        return 1
+    repo = os.environ.get("GITHUB_REPOSITORY", REPO)
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    run_url = f"{server}/{repo}/actions/runs/{run_id}" if run_id else f"{server}/{repo}/actions"
+    gh(vouch_call(sha, repo, run_url), dry_run)
+    print(f"vouched   {CHECK}=success on {sha[:7]}")
+    return 0
+
+
 def lockdown(limit: str, expiry: str, dry_run: bool = False) -> None:
     gh(["api", "-X", "PUT", f"repos/{REPO}/interaction-limits",
         "-f", f"limit={limit}", "-f", f"expiry={expiry}"], dry_run)
@@ -394,12 +432,16 @@ def main() -> None:
         help="the author's open portal-address issues, as `gh issue list --json number` writes them")
     p = sub.add_parser("validate")
     p.add_argument("path", nargs="?", default=str(LOCATIONS))
-    for name in ("setup", "lockdown", "unlock", "status"):
+    for name in ("setup", "lockdown", "unlock", "status", "vouch"):
         p = sub.add_parser(name)
         p.add_argument("--dry-run", action="store_true", help="print the gh calls instead of making them")
     sub.choices["lockdown"].add_argument("--limit", choices=LIMITS, default="existing_users")
     sub.choices["lockdown"].add_argument("--expiry", choices=EXPIRIES, default="one_day")
+    sub.choices["vouch"].add_argument("sha", help="the bot's pull request head commit")
     args = parser.parse_args()
+
+    if args.cmd == "vouch":
+        sys.exit(vouch(args.sha, dry_run=args.dry_run))
 
     if args.cmd == "setup":
         return setup(args.dry_run)

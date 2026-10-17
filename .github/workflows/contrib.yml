@@ -1,6 +1,8 @@
 # Contributed portal addresses: check issues filed with the "Share a portal
-# address" form, turn an accepted one into a pull request, and hold pull
-# requests that edit data/locations.json to the same rules.
+# address" form, and turn an accepted one into a pull request. A pull request
+# that edits data/locations.json by hand is ci.yml's: when that file is the
+# whole change, its `check` job runs only `portal_issue.py validate`, and a
+# change to the bot's script or src/ runs the full suite there.
 #
 # The issue body is untrusted. It never reaches a shell: scripts/portal_issue.py
 # reads it from the event file. Only numbers from the event are interpolated;
@@ -10,11 +12,6 @@ name: Contributions
 on:
   issues:
     types: [opened, edited, labeled]
-  pull_request:
-    paths:
-      - data/locations.json
-      - scripts/portal_issue.py
-      - src/nms_items/portals.py
 
 permissions:
   contents: read
@@ -67,7 +64,9 @@ jobs:
 
   # The repo owner adds `accepted`; the bot writes the entry and opens a PR
   # that closes the issue. PRs opened with this token do not trigger other
-  # workflows, so the whole file is validated here before it is pushed.
+  # workflows, so the whole file is validated here before it is pushed, and
+  # the job then reports the required `check` status on the PR's head itself
+  # (`vouch`): ci.yml would run exactly that validation and nothing more.
   accept-issue:
     if: >-
       github.event_name == 'issues' && github.event.action == 'labeled' &&
@@ -85,6 +84,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       ISSUE: ${{ github.event.issue.number }}
@@ -113,17 +113,6 @@ jobs:
 
           Closes #$ISSUE"
           fi
-
-  validate-pr:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    concurrency:
-      group: contrib-pr-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v7
-      - run: python3 scripts/portal_issue.py validate
-      - uses: astral-sh/setup-uv@v10.3.0
-      - run: uv sync --extra dev
-      - run: uv run pytest -q tests/test_portals.py tests/test_contrib.py
+      # Last, once the branch and the PR exist: validates the file again and
+      # posts `check` = success on the commit just pushed, linking this run.
+      - run: python3 scripts/portal_issue.py vouch "$(git rev-parse HEAD)"

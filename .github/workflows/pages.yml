@@ -20,9 +20,9 @@ concurrency:
 
 jobs:
   # No test suite here, deliberately: it was most of this job's time, and every
-  # change reaches main through a pull request that ci.yml has tested, or
-  # through `mise run deploy`, which runs `check` before it pushes. The type
-  # check stays, as a last guard before a broken page goes live.
+  # change reaches main through a pull request whose required `check` passed
+  # (ci.yml, or the contributions bot's own validation for a portal address).
+  # The type check stays, as a last guard before a broken page goes live.
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

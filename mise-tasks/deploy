@@ -1,30 +1,81 @@
 #!/usr/bin/env bash
-#MISE description="Check, push main over SSH, and follow the Pages deploy it triggers"
+#MISE description="Merge a green pull request and follow the Pages deploy it triggers; without one, re-run Pages for main"
+#USAGE arg "[pr]" help="The pull request to merge; leave it out to re-deploy main as it is"
+#USAGE flag "--no-watch" help="Start the deploy and return, without following the Pages run"
 set -euo pipefail
 repo=rdlu/nms-items-interface
+pr=${usage_pr:-}
+watch=true
+[[ ${usage_no_watch:-false} == true ]] && watch=false
 
-# Refuse before the slow part: only a clean main is ever deployed, and only
-# over SSH (never an HTTPS remote that would fall back to a token).
-[[ $(git branch --show-current) == main ]] || { echo 'deploy pushes main - switch to it first' >&2; exit 1; }
-[[ -z $(git status --porcelain) ]] || { echo 'uncommitted changes - commit or stash them first' >&2; exit 1; }
+# main is protected: it only moves by merging a pull request whose required
+# `check` passed, so this merges on GitHub (gh) rather than pushing a local
+# merge commit, which would carry no status and be rejected. Refuse before the
+# slow part: SSH only (never an HTTPS remote that would fall back to a token),
+# and a working gh.
 remote=$(git remote get-url --push origin)
 case $remote in
   git@*|ssh://*) ;;
-  *) echo "origin pushes to $remote - deploy only pushes over SSH" >&2; exit 1 ;;
+  *) echo "origin pushes to $remote - deploy only works over SSH" >&2; exit 1 ;;
 esac
+gh auth status >/dev/null 2>&1 || { echo 'gh is not logged in - gh auth login' >&2; exit 1; }
 
-mise run check
+# Wait up to 60s for the Pages run of $1 (a commit) newer than run id $2, and
+# print its id. GitHub takes a moment to list a new run.
+find_run() {
+  local sha=$1 after=${2:-0} run=
+  for _ in $(seq 30); do
+    run=$(gh run list -R "$repo" -w pages.yml -c "$sha" -L 1 --json databaseId \
+      -q ".[0].databaseId // empty | select(. > $after)")
+    [[ -n $run ]] && { echo "$run"; return; }
+    sleep 2
+  done
+  echo "no Pages run for ${sha:0:7} after 60s: gh run list -R $repo -w pages.yml" >&2
+  return 1
+}
 
-sha=$(git rev-parse HEAD)
-git push origin main
+if [[ -z $pr ]]; then
+  # No pull request: Pages already deploys whenever main moves, so this is for
+  # a deploy that failed or a settings change - build main again.
+  sha=$(gh api "repos/$repo/commits/main" -q .sha)
+  last=$(gh run list -R "$repo" -w pages.yml -c "$sha" -L 1 --json databaseId -q '.[0].databaseId // 0')
+  gh workflow run pages.yml -R "$repo" --ref main
+  echo "deploy: Pages re-run for main at ${sha:0:7}"
+else
+  [[ $pr =~ ^[0-9]+$ ]] || { echo "deploy: '$pr' is not a pull request number" >&2; exit 1; }
+  state=$(gh pr view "$pr" -R "$repo" --json state,isDraft,baseRefName \
+    -q '"\(.state) \(.isDraft) \(.baseRefName)"')
+  [[ $state == "OPEN false main" ]] || { echo "deploy: #$pr is not an open, ready PR into main ($state)" >&2; exit 1; }
 
-# Follow the Pages run for this commit. GitHub takes a moment to list it, so
-# wait for it rather than picking up the previous run.
-run=
-for _ in $(seq 30); do
-  run=$(gh run list -R "$repo" -w pages.yml -c "$sha" -L 1 --json databaseId -q '.[0].databaseId // empty')
-  [[ -n $run ]] && break
-  sleep 2
-done
-[[ -n $run ]] || { echo "no Pages run for ${sha:0:7} after 60s: gh run list -R $repo -w pages.yml" >&2; exit 1; }
+  # Green, or wait for it: gh exits 8 while checks are pending, 1 on a failure
+  # (or no checks at all). CI's own job timeout is 15 minutes.
+  rc=0
+  gh pr checks "$pr" -R "$repo" >/dev/null 2>&1 || rc=$?
+  if ((rc == 8)); then
+    echo "deploy: #$pr checks pending, waiting (up to 20 min)"
+    rc=0
+    timeout 1200 gh pr checks "$pr" -R "$repo" --watch --fail-fast -i 15 || rc=$?
+  fi
+  if ((rc != 0)); then
+    gh pr checks "$pr" -R "$repo" || true
+    echo "deploy: #$pr is not green - not merging" >&2
+    exit 1
+  fi
+
+  gh pr merge "$pr" -R "$repo" --merge --delete-branch
+  sha=$(gh pr view "$pr" -R "$repo" --json mergeCommit -q '.mergeCommit.oid')
+  last=0
+  echo "deploy: merged #$pr as ${sha:0:7}"
+
+  # Bring the local main along, but only when that cannot lose anything.
+  git fetch --quiet origin
+  if [[ $(git branch --show-current) == main && -z $(git status --porcelain) ]]; then
+    git merge --ff-only origin/main
+  else
+    echo 'deploy: not on a clean main - local main left as is (git pull when ready)'
+  fi
+fi
+
+$watch || { echo "deploy: not watching - gh run list -R $repo -w pages.yml"; exit 0; }
+run=$(find_run "$sha" "$last")
 gh run watch -R "$repo" --exit-status "$run"

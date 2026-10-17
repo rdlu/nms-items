@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # The slow checks, on what this push changes against the remote, decided by
-# scripts/changes.sh exactly as CI decides: the suite in parallel, and the
-# export plus the site build. Installed by `mise run hooks:install`; skip once
-# with NMSII_SKIP_HOOKS=1 or `git push --no-verify`.
+# scripts/changes.sh exactly as CI decides: the suite in parallel, the shared
+# addresses, and the export plus the site build. Written for feature branches:
+# main only moves through a merged pull request (`mise run deploy <pr>`).
+# Installed by `mise run hooks:install`; skip once with NMSII_SKIP_HOOKS=1 or
+# `git push --no-verify`.
 #
 #   NMSII_HOOK_ALL=1   run everything, ignoring what changed (hooks:run)
 set -euo pipefail
@@ -12,7 +14,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 zero=0000000000000000000000000000000000000000
 if [[ ${NMSII_HOOK_ALL:-} == 1 ]]; then
-  decision=$'python=full\nweb=true'
+  decision=$'python=full\nweb=true\nlocations=true'
 else
   # git passes "<local ref> <local sha> <remote ref> <remote sha>" per ref.
   changed=$(
@@ -37,7 +39,12 @@ fi
 
 python=$(sed -n 's/^python=//p' <<<"$decision")
 web=$(sed -n 's/^web=//p' <<<"$decision")
-echo "pre-push: python=$python web=$web"
+locations=$(sed -n 's/^locations=//p' <<<"$decision")
+echo "pre-push: python=$python web=$web locations=$locations"
+
+if [[ $locations == true ]]; then
+  uv run python scripts/portal_issue.py validate
+fi
 
 case $python in
   full) uv run pytest -n auto --dist worksteal ;;

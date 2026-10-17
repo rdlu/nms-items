@@ -206,3 +206,43 @@ def test_lockdown_and_unlock_dry_runs(capsys) -> None:
     out = capsys.readouterr().out
     assert f"gh api -X PUT repos/{bot.REPO}/interaction-limits -f limit=contributors_only -f expiry=one_week" in out
     assert f"gh api -X DELETE repos/{bot.REPO}/interaction-limits" in out
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_vouch_posts_the_required_check_on_the_bot_pr(capsys, monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    assert bot.vouch(SHA, dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert (f"gh api -X POST repos/owner/repo/statuses/{SHA} -f state=success -f context=check "
+            "-f 'description=portal address validated by the contributions bot' "
+            "-f target_url=https://github.com/owner/repo/actions/runs/42") in out
+
+
+def test_vouch_refuses_a_broken_file_or_a_bad_sha(tmp_path, capsys) -> None:
+    broken = tmp_path / "locations.json"
+    broken.write_text('{"locations": [{"name": "x"}]}')
+    assert bot.vouch(SHA, broken, dry_run=True) == 1
+    assert bot.vouch("HEAD; rm -rf /", dry_run=True) == 1
+    assert "would run" not in capsys.readouterr().out
+
+
+def test_the_check_name_is_ci_jobs_name() -> None:
+    """The status the bot posts must be the one main requires: ci.yml's job."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert re.search(rf"^  {bot.CHECK}:$", ci, flags=re.M)
+    # A path filter would leave the required check unreported on some PRs.
+    assert "paths-ignore" not in ci and "paths:" not in ci
+
+
+def test_only_the_owner_gated_accept_job_may_post_statuses() -> None:
+    text = (ROOT / ".github" / "workflows" / "contrib.yml").read_text()
+    jobs = re.split(r"^  (?=[\w-]+:$)", text.split("\njobs:\n", 1)[1], flags=re.M)
+    writers = [job.split(":", 1)[0] for job in jobs if "statuses: write" in job]
+    assert writers == ["accept-issue"]
+    accept = next(job for job in jobs if job.startswith("accept-issue:"))
+    assert "github.event.sender.login == github.repository_owner" in accept
+    assert accept.index("portal_issue.py validate") < accept.index("portal_issue.py vouch")

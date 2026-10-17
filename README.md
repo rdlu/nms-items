@@ -70,7 +70,9 @@ cheat-sheet PDFs are published with it. The custom domain is a repo setting, not
 an Actions deploy ignores one -- so `scripts/pages.py` manages it through `gh`
 (`mise run pages:setup`, `pages:https`, `pages:status`). DNS is a Cloudflare
 `CNAME` record `nms → rdlu.github.io`, DNS only, so GitHub can issue the
-certificate. `mise run deploy` is the whole release: tests, push, watch.
+certificate. `main` only moves through a pull request whose required `check`
+passed; `mise run deploy <pr>` is the whole release: wait for that PR to be
+green, merge it on GitHub, fast-forward the local `main`, and watch Pages.
 
 It wears the same skin as the dotfiles and plugii sites: iA Writer Duo for
 text, 0xProto for code, numbers and navigation (both self-hosted in
@@ -626,11 +628,15 @@ use to convert an address.
   the glyphs and coordinates it read, or what to fix. It labels the issue
   `valid` or `needs-fix`, and checks again on every edit. When the repo owner
   adds `accepted`, it appends the entry as `shared`, credited to the reporter
-  and the issue, and opens the pull request that closes it.
-- **A pull request** editing the file. The same workflow validates the whole
-  file strictly (fields, kinds, galaxies, dialable codes, duplicates) and runs
-  the portal tests. The TUI's loader skips a broken row so a screen never
-  breaks; a PR is told instead. Locally: `mise run contrib:validate`.
+  and the issue, and opens the pull request that closes it. That pull request
+  starts no CI of its own (GitHub runs no workflow for one a workflow opened),
+  so the bot validates the file and posts the required `check` status on it
+  itself.
+- **A pull request** editing the file. CI's `check` validates the whole file
+  strictly (fields, kinds, galaxies, dialable codes, duplicates); when that
+  file is the whole change, that is all it runs, in seconds. The TUI's loader
+  skips a broken row so a screen never breaks; a PR is told instead. Locally:
+  `mise run contrib:validate`.
 
 The issue body is never handed to a shell: the script reads it from the event
 file. `mise run contrib:setup` creates the labels and lets the workflow open
@@ -638,7 +644,7 @@ pull requests, once per repo; `mise run contrib:pending` lists what is waiting.
 
 **Abuse protection.** Only the repo owner's `accepted` label adds anything,
 and the checks need no secrets. Every job has a short timeout (3 minutes for
-the issue jobs, 10 for a PR), and a burst of edits to one issue cancels all
+the issue jobs), and a burst of edits to one issue cancels all
 but the newest check; an accept in progress is never cancelled. One person
 may have three other submissions waiting: past that, a new one is labelled
 `on-hold` with a single polite reply instead of being checked, and an edit
@@ -667,6 +673,7 @@ same thing.
 | [#14](https://github.com/rdlu/nms-items-interface/issues/14) Desktop app | the site wrapped with Tauri v2, for people who don't want Python or podman |
 | [#15](https://github.com/rdlu/nms-items-interface/issues/15) Rust + ratatui? | a serious evaluation of moving the CLI, TUI and MCP server to Rust, for single-binary installs. Not decided yet |
 | [#16](https://github.com/rdlu/nms-items-interface/issues/16) Cheaper CI | split one slow test so a full CI run bills one minute (a good first issue) |
+| [#18](https://github.com/rdlu/nms-items-interface/issues/18) AI helpers | CLAUDE.md, AGENTS.md, project skills and agent definitions for maintaining the repo |
 
 Portal addresses are always welcome without asking first; see above.
 
@@ -687,7 +694,7 @@ scripts in `mise-tasks/<group>/<name>`, which mise names `group:name`.
 | `mise run test` | pytest — data integrity + a headless pass over the TUI, across every core (`test:fast`) |
 | `mise run check` | what CI runs: the full suite, the components, the shared addresses and the site build |
 | `mise run ci:local` | what pull-request CI runs: `check`, plus `lint:shell` |
-| `mise run deploy` | refuses unless on a clean `main`; then check, push `main` over SSH, and follow the Pages deploy |
+| `mise run deploy <pr>` | wait for the PR's checks (up to 20 min), refuse unless green, `gh pr merge --merge --delete-branch`, fast-forward a clean local `main`, and follow the Pages deploy (`--no-watch` to skip that); with no PR, re-run Pages for `main` |
 | `mise run site` | build, then serve `dist/` on `:8791` as Pages will (alias of `web:site`) |
 | `mise run refresh` | full data rebuild from the installed game: `extract:all` → `pdf:build` |
 | `mise run setup` | system deps: the PDF fonts, potrace, resvg, imagemagick (paru) |
@@ -851,7 +858,9 @@ config), not `core.hooksPath`, so global hooks keep running beside them.
 
 Skip them once with `NMSII_SKIP_HOOKS=1` or `--no-verify`. CI
 (`.github/workflows/ci.yml`) still checks every pull request, for Dependabot,
-forks and anyone without the hooks.
+forks and anyone without the hooks. Its `check` job is the required status
+check on `main`, so it runs on every ready pull request, even a docs-only one
+(a checkout and a diff, in seconds); a draft waits until it is marked ready.
 
 ### Keeping dependencies current
 

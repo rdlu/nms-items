@@ -5,12 +5,21 @@
 # commit and push; this is the gate for what arrives without them: Dependabot,
 # forks, contributors.
 #
+# `check` is the required status check on main, so it must report on every
+# pull request: no workflow-level path filter, which would leave a docs-only PR
+# waiting forever for a check that never starts. Instead scripts/changes.sh
+# skips what a change cannot affect, inside the job: prose alone is a checkout
+# and a diff, and a change to data/locations.json alone (a portal address) is
+# the strict validation of that file and nothing else. The contributions bot's
+# own pull requests never start this workflow (a PR opened with GITHUB_TOKEN
+# triggers nothing); contrib.yml posts their `check` status itself.
+#
 # Billed minutes, not wall time, are what this is shaped around. GitHub rounds
 # every job up to a whole minute, so it is one job that runs its steps in
-# sequence and skips the ones the change cannot affect (scripts/changes.sh),
-# rather than parallel jobs that would each bill a minute. Pull requests only,
-# no branch pushes, so a commit is not built twice; drafts wait until they are
-# ready for review.
+# sequence and skips the ones the change cannot affect, rather than parallel
+# jobs that would each bill a minute. Pull requests only, no branch pushes, so
+# a commit is not built twice. A draft skips the job, which GitHub counts as a
+# pass, but a draft cannot be merged; ready_for_review runs it for real.
 #
 # Read-only and secret-free, so it is safe on pull requests from forks and
 # from Dependabot: plain `pull_request`, never `pull_request_target`.
@@ -19,12 +28,6 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # Prose only. Not docs/**: the export copies docs/pdf and docs/img into
-    # the site. Not .github/ISSUE_TEMPLATE/**: the portal bot reads its form.
-    paths-ignore:
-      - "**.md"
-      - LICENSE
-      - .github/ISSUE_TEMPLATE/config.yml
   workflow_dispatch:
 
 permissions:
@@ -55,11 +58,17 @@ jobs:
           if [ -n "$BASE" ]; then
             git diff --name-only "$BASE" HEAD | tee /dev/stderr | scripts/changes.sh >>"$GITHUB_OUTPUT"
           else
-            printf 'python=full\nweb=true\n' >>"$GITHUB_OUTPUT"
+            printf 'python=full\nweb=true\nlocations=true\n' >>"$GITHUB_OUTPUT"
           fi
 
       # A second, so it always runs: bash -n and shellcheck over the scripts.
       - run: mise-tasks/lint/shell
+
+      # The shared addresses, strictly: what a portal-address PR needs, and
+      # all it gets when that file is the whole change. The runner's python3
+      # is enough (the script needs only src/), so no uv and no node.
+      - if: steps.changes.outputs.locations == 'true'
+        run: python3 scripts/portal_issue.py validate
 
       # uv, node from mise.toml, uv sync, npm ci: shared with pages.yml.
       - if: steps.changes.outputs.python != 'none' || steps.changes.outputs.web == 'true'
